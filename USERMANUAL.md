@@ -90,7 +90,10 @@ RSI, distance to 20/50-SMA, ATR, and the features the tree models relied on most
 
 ### Chart
 
-Last ~130 daily candles; the dashed blue line overlays recent intraday closes.
+Last ~130 daily candles; the dashed blue line overlays recent intraday closes. To the
+right of today's candle, a shaded **forecast cone** shows the expected price range at
+the horizon (target band), a dashed midline pulls toward the target, and dashed level
+lines mark the planned **T**arget, **E**ntry and **S**top across the chart.
 
 ### OpenRouter free-model consensus
 

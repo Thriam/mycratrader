@@ -245,7 +245,19 @@ export default function Home() {
             <section>
               <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">Price history (daily)</h3>
               <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-                <CandleChart daily={history.daily} intraday={history.intraday} />
+                <CandleChart
+                  daily={history.daily}
+                  intraday={history.intraday}
+                  forecast={{
+                    verdict: p.verdict,
+                    entry: t.entry_price,
+                    stop: t.stop_loss,
+                    target: t.target,
+                    targetBandLow: t.target_band_low,
+                    targetBandHigh: t.target_band_high,
+                    exitBy: t.approx_exit_by,
+                  }}
+                />
               </div>
             </section>
           )}
