@@ -8,6 +8,8 @@ interface FormState {
   symbol: string;
   exchange: "NSE" | "BSE";
   horizon: "swing" | "positional";
+  mode: "real" | "check";
+  asOf: string;
 }
 
 const VERDICT_STYLES: Record<string, string> = {
@@ -15,6 +17,10 @@ const VERDICT_STYLES: Record<string, string> = {
   SELL: "bg-red-500/15 text-red-400 border-red-500/40",
   HOLD: "bg-amber-500/15 text-amber-400 border-amber-500/40",
 };
+
+function defaultAsOf() {
+  return new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+}
 
 function pct(v: number) {
   return `${(v * 100).toFixed(1)}%`;
@@ -30,18 +36,28 @@ function Metric({ label, value, accent }: { label: string; value: string; accent
 }
 
 export default function Home() {
-  const [form, setForm] = useState<FormState>({ symbol: "RELIANCE", exchange: "NSE", horizon: "swing" });
+  const [form, setForm] = useState<FormState>({
+    symbol: "RELIANCE",
+    exchange: "NSE",
+    horizon: "swing",
+    mode: "real",
+    asOf: defaultAsOf(),
+  });
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const run = useCallback(async () => {
+    if (form.mode === "check" && !form.asOf) {
+      setError("Pick the pretend-today date for the self-check first.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const [analysisRes, historyRes] = await Promise.all([
-        fetchAnalysis(form.symbol, form.exchange, form.horizon),
+        fetchAnalysis(form.symbol, form.exchange, form.horizon, form.mode, form.asOf),
         fetchHistory(form.symbol, form.exchange),
       ]);
       setAnalysis(analysisRes);
@@ -68,6 +84,36 @@ export default function Home() {
           walk-forward backtested, reviewed by free OpenRouter models.
         </p>
       </header>
+
+      {/* Mode tabs */}
+      <section className="mb-6 flex gap-2">
+        {(
+          [
+            ["real", "Live market"],
+            ["check", "Self-check"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setForm({ ...form, mode: key })}
+            className={`rounded-lg border px-4 py-1.5 text-sm font-medium transition ${
+              form.mode === key
+                ? key === "real"
+                  ? "border-sky-500/60 bg-sky-500/15 text-sky-300"
+                  : "border-violet-500/60 bg-violet-500/15 text-violet-300"
+                : "border-slate-800 text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        {form.mode === "check" && (
+          <span className="ml-2 self-center text-xs text-slate-500">
+            Pretends today is the date below, trains only on candles before it, then scores the call against what really happened.
+          </span>
+        )}
+      </section>
 
       {/* Query form */}
       <section className="mb-10 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
@@ -131,12 +177,29 @@ export default function Home() {
             </div>
           </div>
 
+          <div className="min-w-[180px]">
+            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">
+              {form.mode === "check" ? "Pretend today is" : "—"}
+            </span>
+            <input
+              type="date"
+              value={form.asOf}
+              disabled={form.mode === "real"}
+              onChange={(e) => setForm({ ...form, asOf: e.target.value })}
+              className={`w-full rounded-lg border px-3 py-2 text-slate-200 outline-none disabled:cursor-not-allowed disabled:opacity-40 ${
+                form.mode === "check"
+                  ? "border-slate-700 bg-slate-950 focus:border-violet-500"
+                  : "border-slate-900 bg-slate-950"
+              }`}
+            />
+          </div>
+
           <button
             type="submit"
             disabled={loading}
             className="rounded-lg bg-sky-600 px-6 py-2 font-medium text-white transition hover:bg-sky-500 disabled:opacity-50"
           >
-            {loading ? "Analyzing…" : "Predict"}
+            {loading ? "Analyzing…" : form.mode === "check" ? "Run self-check" : "Predict"}
           </button>
         </form>
         {error && (
@@ -157,6 +220,8 @@ export default function Home() {
                   {analysis.company}{" "}
                   <span className="text-sm font-normal text-slate-400">
                     · {analysis.symbol} ({analysis.exchange}) · {analysis.horizon_label}
+                    {analysis.mode === "check" && analysis.check &&
+                      ` · self-check as of ${analysis.check.as_of}`}
                   </span>
                 </h2>
                 <div className="text-sm text-slate-500">{analysis.sector}</div>
@@ -178,6 +243,57 @@ export default function Home() {
               <Metric label="Agreement" value={pct(p.model_agreement)} />
             </div>
           </section>
+
+          {/* Self-check outcome */}
+          {analysis.check && (
+            <section className="rounded-xl border border-violet-900/60 bg-violet-950/20 p-5">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-violet-300">
+                  Self-check: prediction vs reality
+                </h3>
+                {analysis.check.direction.correct && analysis.check.plan.outcome !== "STOPPED_OUT" ? (
+                  <span className="rounded-lg border border-green-500/50 bg-green-500/15 px-3 py-1 text-sm font-bold text-green-400">
+                    ✓ Call held up
+                  </span>
+                ) : (
+                  <span className="rounded-lg border border-red-500/50 bg-red-500/15 px-3 py-1 text-sm font-bold text-red-400">
+                    ✗ Call failed
+                  </span>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Direction</div>
+                  <div className="mt-1 text-sm text-slate-200">
+                    predicted <span className="font-bold">{analysis.check.direction.predicted}</span>
+                    {" · actual "}
+                    <span className="font-bold">{analysis.check.direction.actual}</span>
+                    <span className={`ml-2 text-xs ${analysis.check.direction.correct ? "text-green-400" : "text-red-400"}`}>
+                      {analysis.check.direction.correct ? "correct" : "wrong"}
+                    </span>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Move over horizon</div>
+                  <div className="mt-1 text-sm text-slate-200">
+                    predicted <span className="font-bold">{analysis.check.move.predicted_pct > 0 ? "+" : ""}{analysis.check.move.predicted_pct}%</span>
+                    {" · actual "}
+                    <span className="font-bold">{analysis.check.move.actual_pct > 0 ? "+" : ""}{analysis.check.move.actual_pct}%</span>
+                    <span className="ml-2 text-xs text-slate-500">err {analysis.check.move.error_pct}%</span>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Trade plan replay</div>
+                  <div className="mt-1 text-sm text-slate-200">{analysis.check.plan.outcome.replace("_", " ")}</div>
+                </div>
+              </div>
+              <p className="mt-3 text-sm text-slate-300">{analysis.check.plan.detail}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Called on {analysis.check.as_of} (close ₹{analysis.check.as_of_close.toLocaleString("en-IN")}), evaluated
+                through {analysis.check.evaluated_through} over {analysis.check.horizon_trading_days} trading days.
+              </p>
+            </section>
+          )}
 
           {/* Trade timing plan */}
           <section>

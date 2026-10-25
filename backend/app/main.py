@@ -31,6 +31,8 @@ class PredictRequest(BaseModel):
     symbol: str
     exchange: Literal["NSE", "BSE"] = "NSE"
     horizon: Literal["swing", "positional"] = "swing"
+    mode: Literal["real", "check"] = "real"
+    as_of: str | None = None
 
 
 @app.get("/api/health")
@@ -44,7 +46,8 @@ def health() -> Dict[str, Any]:
 @app.post("/api/predict")
 def predict(req: PredictRequest) -> Dict[str, Any]:
     try:
-        return run_analysis(req.symbol, req.exchange, req.horizon)
+        return run_analysis(req.symbol, req.exchange, req.horizon,
+                            mode=req.mode, as_of=req.as_of)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:

@@ -15,6 +15,23 @@ export interface HistoryResponse {
   intraday: Candle[];
 }
 
+export interface CheckResult {
+  mode: "check";
+  as_of: string;
+  as_of_close: number;
+  horizon_trading_days: number;
+  evaluated_through: string;
+  direction: { predicted: "UP" | "DOWN"; actual: "UP" | "DOWN"; correct: boolean };
+  move: { predicted_pct: number; actual_pct: number; error_pct: number };
+  plan: {
+    entry: number;
+    stop: number;
+    target: number;
+    outcome: "TARGET_HIT" | "STOPPED_OUT" | "NO_TOUCH";
+    detail: string;
+  };
+}
+
 export interface AnalysisResponse {
   symbol: string;
   exchange: string;
@@ -23,6 +40,8 @@ export interface AnalysisResponse {
   sector: string;
   horizon: "swing" | "positional";
   horizon_label: string;
+  mode?: "real" | "check";
+  check?: CheckResult | null;
   prediction: {
     verdict: "BUY" | "SELL" | "HOLD";
     prob_up: number;
@@ -84,12 +103,14 @@ export async function fetchHistory(symbol: string, exchange: string) {
 export async function fetchAnalysis(
   symbol: string,
   exchange: string,
-  horizon: "swing" | "positional"
+  horizon: "swing" | "positional",
+  mode: "real" | "check" = "real",
+  asOf?: string
 ) {
   const res = await fetch(`${API_BASE}/api/predict`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ symbol, exchange, horizon }),
+    body: JSON.stringify({ symbol, exchange, horizon, mode, as_of: asOf || null }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => null);

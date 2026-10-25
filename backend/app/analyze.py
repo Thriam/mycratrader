@@ -97,20 +97,104 @@ def _timing_block(daily: pd.DataFrame, intraday: pd.DataFrame,
     }
 
 
-def run_analysis(symbol: str, exchange: str, horizon: str) -> Dict:
+def _self_check_block(daily_full: pd.DataFrame, as_of_ts: pd.Timestamp,
+                      horizon_days: int, pred: ml.PredictionResult,
+                      timing: Dict, mode: str) -> Dict:
+    """Re-play the plan against candles that actually followed the as-of date."""
+    as_of_close = float(daily_full.loc[daily_full.index <= as_of_ts, "Close"].iloc[-1])
+    future = daily_full.loc[daily_full.index > as_of_ts]
+    win = future.iloc[:horizon_days]
+    if len(win) < horizon_days:
+        raise ValueError(
+            "Not enough candles after that date to evaluate the horizon "
+            f"(need {horizon_days} trading days; got {len(future)}). Pick an earlier date."
+        )
+    eval_date = str(win.index[-1].date())
+    close_at_eval = float(win["Close"].iloc[-1])
+    actual_pct = close_at_eval / as_of_close - 1.0
+
+    predicted_dir = "UP" if pred.prob_up > 0.5 else "DOWN"
+    actual_dir = "UP" if actual_pct > 0 else "DOWN"
+
+    entry, stop, target = timing["entry_price"], timing["stop_loss"], timing["target"]
+    target_hit_on = stop_hit_on = None
+    for idx, row in win.iterrows():
+        d = str(idx.date())
+        if stop_hit_on is None and float(row["Low"]) <= stop:
+            stop_hit_on = d
+        if target_hit_on is None and float(row["High"]) >= target:
+            target_hit_on = d
+        if stop_hit_on and target_hit_on:
+            break
+    if target_hit_on and (not stop_hit_on or target_hit_on <= stop_hit_on):
+        outcome, detail = "TARGET_HIT", f"target reached on {target_hit_on}"
+    elif stop_hit_on:
+        outcome, detail = "STOPPED_OUT", f"stop hit on {stop_hit_on}"
+    else:
+        outcome, detail = "NO_TOUCH", (
+            f"neither level touched within {horizon_days} trading days; "
+            f"closed at {close_at_eval:.2f} on {eval_date}"
+        )
+
+    return {
+        "mode": mode,
+        "as_of": str(as_of_ts.date()),
+        "as_of_close": round(as_of_close, 2),
+        "horizon_trading_days": horizon_days,
+        "evaluated_through": eval_date,
+        "direction": {
+            "predicted": predicted_dir,
+            "actual": actual_dir,
+            "correct": predicted_dir == actual_dir,
+        },
+        "move": {
+            "predicted_pct": round(pred.expected_move_pct * 100, 2),
+            "actual_pct": round(actual_pct * 100, 2),
+            "error_pct": round(abs(pred.expected_move_pct - actual_pct) * 100, 2),
+        },
+        "plan": {
+            "entry": entry, "stop": stop, "target": target,
+            "outcome": outcome, "detail": detail,
+        },
+    }
+
+
+def run_analysis(symbol: str, exchange: str, horizon: str,
+                 mode: str = "real", as_of: str | None = None) -> Dict:
     horizon_key = (horizon or "swing").lower()
     if horizon_key not in HORIZONS:
         raise ValueError(f"Unknown horizon '{horizon}'; use 'swing' or 'positional'")
+    if mode not in ("real", "check"):
+        raise ValueError(f"Unknown mode '{mode}'; use 'real' or 'check'")
     horizon_days = HORIZONS[horizon_key]["days"]
     horizon_label = HORIZONS[horizon_key]["label"]
 
     yahoo_symbol = data.resolve_yahoo_symbol(symbol, exchange)
     profile = data.get_company_profile(yahoo_symbol)
-    daily = data.get_daily_history(yahoo_symbol)
-    try:
-        intraday = data.get_intraday_history(yahoo_symbol)
-    except Exception:
-        intraday = pd.DataFrame()
+    daily_full = data.get_daily_history(yahoo_symbol)
+
+    # In self-check mode the engine must believe 'today' is the chosen date:
+    # everything downstream trains and times trades on candles up to as_of only.
+    as_of_ts = None
+    if mode == "check":
+        if not as_of:
+            raise ValueError("Self-check mode requires an 'as_of' date (YYYY-MM-DD)")
+        as_of_ts = pd.Timestamp(as_of)
+        if daily_full.index.tz is not None:
+            as_of_ts = as_of_ts.tz_localize(daily_full.index.tz)
+        daily = daily_full.loc[daily_full.index <= as_of_ts]
+        if len(daily) < 250:
+            raise ValueError(
+                f"Not enough history before {as_of} ({len(daily)} candles) to train on; "
+                "pick an earlier-self date at least a year after the stock's listing."
+            )
+        intraday = pd.DataFrame()  # no peeking at the future
+    else:
+        daily = daily_full
+        try:
+            intraday = data.get_intraday_history(yahoo_symbol)
+        except Exception:
+            intraday = pd.DataFrame()
 
     if len(daily) < 250:
         raise RuntimeError(
@@ -119,6 +203,10 @@ def run_analysis(symbol: str, exchange: str, horizon: str) -> Dict:
 
     pred = ml.predict(daily, horizon_days)
     timing = _timing_block(daily, intraday, pred, horizon_days, profile["currency"])
+    check = None
+    if mode == "check":
+        check = _self_check_block(daily_full, as_of_ts, horizon_days,
+                                  pred, timing, mode)
 
     payload = {
         "stock": f"{profile['name']} ({symbol.upper()} on {exchange.upper()})",
@@ -152,6 +240,8 @@ def run_analysis(symbol: str, exchange: str, horizon: str) -> Dict:
         "sector": profile["sector"],
         "horizon": horizon_key,
         "horizon_label": horizon_label,
+        "mode": mode,
+        "check": check,
         "prediction": {
             "verdict": pred.verdict,
             "prob_up": round(pred.prob_up, 4),

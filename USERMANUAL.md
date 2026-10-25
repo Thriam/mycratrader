@@ -55,6 +55,25 @@ Press **Predict**. The first analysis of a symbol takes around 1–2 minutes bec
 models are trained and walk-forward backtested. Repeat queries within five minutes are
 near-instant (data cache). Results appear in cards explained below.
 
+### Two tabs: Live market vs Self-check
+
+- **Live market** — the normal mode: pretends nothing, uses today's real candle as the
+  last known price.
+- **Self-check** — pick a date in the "Pretend today is" field (defaults to ~4 months
+  ago). The engine is told that date is *today*: it trains only on candles before it,
+  computes the verdict and the full trade plan, then replays the plan against the
+  candles that really followed. You get a scored panel:
+  - **Direction** — predicted UP/DOWN vs what the price actually did over the horizon,
+  - **Move** — predicted % move vs the actual % move, with the error,
+  - **Trade plan replay** — `TARGET HIT` (with the date) / `STOPPED OUT` (with the date)
+    / `NO TOUCH` (where it closed at the end of the horizon).
+  - A headline badge: **✓ Call held up** or **✗ Call failed**.
+
+  Weight these dates well: one lucky check proves nothing. Run the same symbol across
+  several pretend dates (say, five spread over the last year) and count — if hits and
+  misses track roughly the walk-forward accuracy shown for the model, the engine is
+  behaving exactly as claimed and not peeking at the future.
+
 ---
 
 ## 3. Reading the results
